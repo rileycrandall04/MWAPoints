@@ -1,4 +1,6 @@
 # app.py
+# (see previous cell for full implementation notes)
+
 import streamlit as st
 import pandas as pd
 import datetime as dt
@@ -8,331 +10,257 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 import gspread
 
-st.set_page_config(page_title="MWA Points Tracker", layout="wide")
+st.set_page_config(page_title='MWA Points Tracker â€” Live Preview', layout='wide')
 
-OAUTH_CLIENT_ID = st.secrets["oauth"]["client_id"]
-OAUTH_CLIENT_SECRET = st.secrets["oauth"]["client_secret"]
-REDIRECT_URI = st.secrets["oauth"]["redirect_uri"]
+# OAuth / Config
+OAUTH_CLIENT_ID = st.secrets['oauth']['client_id']
+OAUTH_CLIENT_SECRET = st.secrets['oauth']['client_secret']
+REDIRECT_URI = st.secrets['oauth']['redirect_uri']
 SCOPES = [
-    "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/spreadsheets"
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/spreadsheets'
 ]
 
-def hours_mod(start: dt.time, end: dt.time) -> float:
-    if not start or not end: return 0.0
-    s = start.hour + start.minute/60
-    e = end.hour + end.minute/60
-    return (e - s) % 24
+def parse_time_flex(s):
+    if s is None: return None
+    s = str(s).strip()
+    if s == '': return None
+    if not s.isdigit(): return None
+    if len(s)==1: hh,mm=int(s),0
+    elif len(s)==2: hh,mm=int(s),0
+    elif len(s)==3: hh,mm=int(s[0]),int(s[1:])
+    elif len(s)==4: hh,mm=int(s[:2]),int(s[2:])
+    else: return None
+    if not (0<=hh<=23 and 0<=mm<=59): return None
+    return dt.time(hh,mm)
 
-def overlap_hours(start: float, end: float, a: float, b: float) -> float:
-    if end < start: end += 24
+def fmt_hhmm(t):
+    return t.strftime('%H:%M') if isinstance(t, dt.time) else ''
+
+def hours_overlap(start_h, end_h, a, b):
+    if end_h < start_h: end_h += 24
     total = 0.0
     for A,B in [(a,b),(a+24,b+24)]:
-        lo, hi = max(start,A), min(end,B)
-        if hi > lo: total += (hi-lo)
+        lo, hi = max(start_h,A), min(end_h,B)
+        if hi>lo: total += (hi-lo)
     return total
 
-def band_split(start_t, end_t):
-    if not isinstance(start_t, dt.time) or not isinstance(end_t, dt.time):
+def split_bands(start_t, end_t):
+    if not (isinstance(start_t, dt.time) and isinstance(end_t, dt.time)):
         return 0.0,0.0,0.0,0.0
     s = start_t.hour + start_t.minute/60
     e = end_t.hour + end_t.minute/60
-    total = hours_mod(start_t, end_t)
-    day = overlap_hours(s,e,7,17)
-    eve = overlap_hours(s,e,17,23)
-    night = overlap_hours(s,e,23,24) + overlap_hours(s,e,0,7)
-    return total, day, eve, night
+    total = (e - s) % 24
+    day = hours_overlap(s,e,7,17)
+    eve = hours_overlap(s,e,17,23)
+    nit = hours_overlap(s,e,23,24)+hours_overlap(s,e,0,7)
+    return total, day, eve, nit
 
-def is_we_or_holiday(date_obj, holidays_set):
-    return (date_obj.isoweekday() >= 6) or (date_obj in holidays_set)
+def cap_ar_points(base, d,e,n):
+    return d*base*1.00 + e*base*1.10 + n*base*1.25
 
-def parse_time_str(s: str):
-    if not s: return None
-    try:
-        h, m = [int(x) for x in s.split(":")]
-        return dt.time(h%24, m%60)
-    except:
-        return None
+def cap_ob_points(d,e,n):
+    base=13.0
+    return d*base*1.00 + e*base*1.10 + n*base*1.25
 
-def hhmm(x: float):
-    h = int(x); m = int(round((x-h)*60))
-    if m==60: h,m = h+1,0
-    return f"{h}:{m:02d}"
-
-def get_auth_flow(state: str):
-    client_config = {
-        "web": {
-            "client_id": OAUTH_CLIENT_ID,
-            "client_secret": OAUTH_CLIENT_SECRET,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [REDIRECT_URI],
-        }
-    }
-    flow = Flow.from_client_config(client_config, scopes=[
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ], redirect_uri=REDIRECT_URI)
-    flow.params = {"access_type":"offline","include_granted_scopes":"true","prompt":"consent"}
+def get_auth_flow(state):
+    client_config = {'web': {
+        'client_id': OAUTH_CLIENT_ID,
+        'client_secret': OAUTH_CLIENT_SECRET,
+        'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+        'token_uri': 'https://oauth2.googleapis.com/token',
+        'redirect_uris': [REDIRECT_URI],
+    }}
+    flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    flow.params={'access_type':'offline','include_granted_scopes':'true','prompt':'consent'}
     return flow
 
 def login_button():
-    state = st.session_state.get("oauth_state") or str(int(time.time()))
-    st.session_state["oauth_state"] = state
-    flow = get_auth_flow(state)
-    auth_url, _ = flow.authorization_url(state=state)
-    st.link_button("🔐 Sign in with Google", auth_url, use_container_width=True)
+    state = st.session_state.get('oauth_state') or str(int(time.time()))
+    st.session_state['oauth_state']=state
+    auth_url,_ = get_auth_flow(state).authorization_url(state=state)
+    st.link_button('ðŸ” Sign in with Google', auth_url, use_container_width=True)
 
 def exchange_code_for_token():
     params = st.query_params
-    if "state" in params and "code" in params:
-        state = params["state"]
-        code = params["code"]
-        flow = get_auth_flow(state)
-        flow.fetch_token(code=code)
+    if 'state' in params and 'code' in params:
+        flow = get_auth_flow(params['state'])
+        flow.fetch_token(code=params['code'])
         return flow.credentials
     return None
 
 def ensure_user_sheet(gc):
-    SPREADSHEET_NAME = "MWA Points Data"
-    try:
-        sh = gc.open(SPREADSHEET_NAME)
-    except Exception:
-        sh = gc.create(SPREADSHEET_NAME)
-    try:
-        ws_entries = sh.worksheet("Entries")
-    except Exception:
-        ws_entries = sh.add_worksheet(title="Entries", rows=1000, cols=20)
-        ws_entries.update("A1:H1", [["Date","Category","Start","End","TEE Exams","Productivity Points","Extra Points","Notes"]])
-    try:
-        ws_holidays = sh.worksheet("Holidays")
-    except Exception:
-        ws_holidays = sh.add_worksheet(title="Holidays", rows=100, cols=1)
-        ws_holidays.update("A1:A1", [["Holiday Dates (YYYY-MM-DD)"]])
+    name='MWA Points Data'
+    try: sh = gc.open(name)
+    except: sh = gc.create(name)
+    try: ws_entries = sh.worksheet('Entries')
+    except:
+        ws_entries = sh.add_worksheet(title='Entries', rows=1000, cols=20)
+        ws_entries.update('A1:H1', [['Date','Category','Start','End','TEE Exams','Productivity Points','Extra Points','Notes']])
+    try: ws_holidays = sh.worksheet('Holidays')
+    except:
+        ws_holidays = sh.add_worksheet(title='Holidays', rows=100, cols=1)
+        ws_holidays.update('A1:A1', [['Holiday Dates (YYYY-MM-DD)']])
     return sh, ws_entries, ws_holidays
 
 def load_entries(ws_entries):
-    values = ws_entries.get_all_records()
-    if not values:
-        return pd.DataFrame(columns=["Date","Category","Start","End","TEE Exams","Productivity Points","Extra Points","Notes"])
-    df = pd.DataFrame(values)
-    if "Date" in df: df["Date"] = pd.to_datetime(df["Date"]).dt.date
-    for col in ["Start","End"]:
+    vals = ws_entries.get_all_records()
+    if not vals:
+        return pd.DataFrame(columns=['Date','Category','Start','End','TEE Exams','Productivity Points','Extra Points','Notes'])
+    df = pd.DataFrame(vals)
+    if 'Date' in df: df['Date']=pd.to_datetime(df['Date']).dt.date
+    for col in ['Start','End']:
         if col in df:
-            def to_time(s):
+            def to_time(x):
                 try:
-                    hh,mm = [int(x) for x in str(s).split(":")]
+                    hh,mm = [int(t) for t in str(x).split(':')]
                     return dt.time(hh%24, mm%60)
                 except: return None
-            df[col] = df[col].apply(to_time)
-    for col in ["TEE Exams","Productivity Points","Extra Points"]:
-        if col in df: df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    for col in ["Category","Notes"]:
-        if col in df: df[col] = df[col].fillna("")
+            df[col]=df[col].apply(to_time)
+    for col in ['TEE Exams','Productivity Points','Extra Points']:
+        if col in df: df[col]=pd.to_numeric(df[col], errors='coerce').fillna(0)
+    for col in ['Category','Notes']:
+        if col in df: df[col]=df[col].fillna('')
     return df
 
-def save_entries(ws_entries, df: pd.DataFrame):
-    header = ["Date","Category","Start","End","TEE Exams","Productivity Points","Extra Points","Notes"]
-    ws_entries.clear()
-    ws_entries.update("A1:H1", [header])
-    out = []
-    for _, r in df.iterrows():
-        date_str = r["Date"].strftime("%Y-%m-%d") if r.get("Date") else ""
-        fmt = lambda t: t.strftime("%H:%M") if isinstance(t, dt.time) else ""
-        out.append([
-            date_str, r.get("Category",""), fmt(r.get("Start")), fmt(r.get("End")),
-            r.get("TEE Exams",0), r.get("Productivity Points",0), r.get("Extra Points",0), r.get("Notes","")
-        ])
-    if out:
-        ws_entries.update(f"A2:H{len(out)+1}", out)
+def save_entries(ws_entries, df):
+    header=['Date','Category','Start','End','TEE Exams','Productivity Points','Extra Points','Notes']
+    ws_entries.clear(); ws_entries.update('A1:H1',[header])
+    out=[]
+    for _,r in df.iterrows():
+        d = r['Date'].strftime('%Y-%m-%d') if isinstance(r['Date'], dt.date) else ''
+        fmt=lambda t: t.strftime('%H:%M') if isinstance(t, dt.time) else ''
+        out.append([d, r.get('Category',''), fmt(r.get('Start')), fmt(r.get('End')), r.get('TEE Exams',0),
+                    r.get('Productivity Points',0), r.get('Extra Points',0), r.get('Notes','')])
+    if out: ws_entries.update(f'A2:H{len(out)+1}', out)
 
-def load_holidays(ws_holidays):
-    vals = ws_holidays.col_values(1)[1:]
-    res = set()
-    for s in vals:
-        try:
-            res.add(dt.datetime.strptime(s.strip(), "%Y-%m-%d").date())
-        except: pass
-    return res
+def entry_time_points(category, date, start_t, end_t):
+    ttl,d,e,n = split_bands(start_t, end_t)
+    if category=='Unrestricted Call':
+        return ttl*3.5
+    if category in ('Assigned (General AR)','Activation from Unrestricted Call'):
+        pts = cap_ar_points(20.0, d,e,n)
+        if category=='Assigned (General AR)': pts = max(pts, 80.0)
+        return pts
+    if category=='Restricted OB (In-house)':
+        return cap_ob_points(d,e,n)
+    if category=='Cardiac (Subspecialty) â€“ Coverage':
+        return 45.0
+    return 0.0
 
-def add_holiday(ws_holidays, date_obj: dt.date):
-    last_row = len(ws_holidays.col_values(1)) + 1
-    ws_holidays.update_cell(last_row, 1, date_obj.strftime("%Y-%m-%d"))
+def preview_rows(date, category, start_t, end_t, tee, prod, extra, notes):
+    rows=[]
+    if end_t < start_t:
+        rows.append({'Date':date,'Category':category,'Start':start_t,'End':dt.time(23,59),
+                     'TEE Exams':tee,'Productivity Points':prod,'Extra Points':extra,'Notes':notes})
+        rows.append({'Date':date+dt.timedelta(days=1),'Category':category,'Start':dt.time(0,0),'End':end_t,
+                     'TEE Exams':0,'Productivity Points':0.0,'Extra Points':0.0,'Notes':f'(overnight from {date}) '+(notes or '')})
+    else:
+        rows.append({'Date':date,'Category':category,'Start':start_t,'End':end_t,
+                     'TEE Exams':tee,'Productivity Points':prod,'Extra Points':extra,'Notes':notes})
+    return rows
 
-def compute_points(row, holidays_set):
-    date = row.get("Date")
-    category = row.get("Category")
-    start = row.get("Start")
-    end = row.get("End")
-    tee = float(row.get("TEE Exams", 0) or 0)
-    prod = float(row.get("Productivity Points", 0) or 0)
-    extra = float(row.get("Extra Points", 0) or 0)
+st.title('MWA Points Tracker â€” Live Preview')
 
-    def is_we_or_holiday(d): 
-        return (d.isoweekday() >= 6) or (d in holidays_set)
-
-    ttl, d, e, n = band_split(start, end)
-    weho = (isinstance(date, dt.date) and is_we_or_holiday(date))
-
-    auto = 0.0
-    if category == "Unrestricted Call":
-        auto = ttl * 3.5
-    elif category in ("Assigned (General AR)","Activation from Unrestricted Call"):
-        auto = (d*(22 if weho else 20)) + (e*(25 if weho else 22)) + (n*25)
-        if category == "Assigned (General AR)":
-            auto = max(auto, 80.0)
-    elif category == "Restricted OB (In-house)":
-        auto = (d*(14.3 if weho else 13)) + (e*(16.25 if weho else 14.3)) + (n*16.25)
-    elif category == "Cardiac (Subspecialty) – Coverage":
-        auto = 45.0
-
-    total = auto + 22.0*tee + prod + extra
-    return auto, total, ttl, d, e, n
-
-st.title("MWA Points Tracker — Dashboard")
-
-from google.oauth2.credentials import Credentials
-creds = st.session_state.get("creds")
+creds = st.session_state.get('creds')
 if not creds:
     maybe = exchange_code_for_token()
     if maybe:
-        st.session_state["creds"] = maybe
+        st.session_state['creds']=maybe
         creds = maybe
-
 if not creds:
-    st.info("Sign in with Google to save your data to your own Drive.")
-    login_button()
-    st.stop()
+    st.info('Sign in with Google to save your data to your own Drive.'); login_button(); st.stop()
 
-try:
-    gc = gspread.authorize(creds)
-    sh, ws_entries, ws_holidays = ensure_user_sheet(gc)
-except Exception as e:
-    st.error(f"Google Sheets/Drive error: {e}")
-    st.stop()
+gc = gspread.authorize(creds)
+sh, ws_entries, ws_holidays = ensure_user_sheet(gc)
 
 entries = load_entries(ws_entries)
-holidays = load_holidays(ws_holidays)
 
-CATEGORIES = [
-    "Assigned (General AR)",
-    "Activation from Unrestricted Call",
-    "Restricted OB (In-house)",
-    "Unrestricted Call",
-    "Cardiac (Subspecialty) – Coverage",
+CATEGORIES=[
+    'Assigned (General AR)',
+    'Activation from Unrestricted Call',
+    'Restricted OB (In-house)',
+    'Unrestricted Call',
+    'Cardiac (Subspecialty) â€“ Coverage',
 ]
 
-tab_entries, tab_summary, tab_analytics, tab_reports, tab_settings = st.tabs(
-    ["Entries","Summary","Analytics","Reports","Settings"]
-)
+tab_entries, tab_summary = st.tabs(['Entries','Summary'])
 
 with tab_entries:
-    st.subheader("Add Entry")
-    with st.form("add_entry_form", clear_on_submit=True):
+    st.subheader('Add Entry')
+    with st.form('add_entry_form', clear_on_submit=False):
         c = st.columns([1,1.4,1,1,1,1,1,2])
-        date = c[0].date_input("Date", value=dt.date.today())
-        category = c[1].selectbox("Category", CATEGORIES, index=0)
-        start = c[2].text_input("Start (HH:MM)", "")
-        end   = c[3].text_input("End (HH:MM)", "")
-        tee   = c[4].number_input("TEE Exams", min_value=0, step=1, value=0)
-        prod  = c[5].number_input("Productivity Points", min_value=0.0, step=1.0, value=0.0)
-        extra = c[6].number_input("Extra Points", min_value=0.0, step=1.0, value=0.0)
-        notes = c[7].text_input("Notes","")
-        if st.form_submit_button("Add"):
-            new = pd.DataFrame([{
-                "Date": date,
-                "Category": category,
-                "Start": parse_time_str(start),
-                "End": parse_time_str(end),
-                "TEE Exams": tee,
-                "Productivity Points": prod,
-                "Extra Points": extra,
-                "Notes": notes
-            }])
-            entries = pd.concat([entries, new], ignore_index=True)
-            save_entries(ws_entries, entries)
-            st.success("Saved."); st.experimental_rerun()
+        date = c[0].date_input('Date', value=dt.date.today())
+        category = c[1].selectbox('Category', CATEGORIES, index=0)
+        start_str = c[2].text_input('Start (HHMM, e.g., 700 or 1735)', '')
+        end_str   = c[3].text_input('End (HHMM, e.g., 945 or 2310)', '')
+        tee   = c[4].number_input('TEE Exams', min_value=0, step=1, value=0)
+        prod  = c[5].number_input('Productivity Points', min_value=0.0, step=1.0, value=0.0)
+        extra = c[6].number_input('Extra Points', min_value=0.0, step=1.0, value=0.0)
+        notes = c[7].text_input('Notes','')
 
-    st.subheader("Your Entries")
+        start_t = parse_time_flex(start_str) if start_str else None
+        end_t   = parse_time_flex(end_str) if end_str else None
+
+        preview_box = st.empty()
+        can_preview=True
+        msgs=[]
+        if start_str and start_t is None: msgs.append('âŒ Start time invalid (use 9, 930, 0715, 2300).'); can_preview=False
+        if end_str and end_t is None: msgs.append('âŒ End time invalid (use 9, 930, 0715, 2300).'); can_preview=False
+
+        if start_t and end_t and can_preview:
+            rows = preview_rows(date, category, start_t, end_t, tee, prod, extra, notes)
+            per_row_msgs=[]; new_time=0.0; new_prod=0.0
+            for r in rows:
+                tp = entry_time_points(r['Category'], r['Date'], r['Start'], r['End'])
+                tp += 22.0*float(r.get('TEE Exams',0) or 0)
+                per_row_msgs.append(f"- {r['Date']} | {fmt_hhmm(r['Start'])}â€“{fmt_hhmm(r['End'])} â†’ time pts **{tp:.2f}**")
+                new_time += tp; new_prod += float(r.get('Productivity Points',0.0) or 0.0)
+            current_daily=0.0
+            if not entries.empty:
+                same = entries[entries['Date']==date]
+                for _,r in same.iterrows():
+                    tp = entry_time_points(r['Category'], r['Date'], r['Start'], r['End'])
+                    tp += 22.0*float(r.get('TEE Exams',0) or 0)
+                    tp += float(r.get('Productivity Points',0) or 0)
+                    tp += float(r.get('Extra Points',0) or 0)
+                    current_daily += tp
+            projected = current_daily + new_time + new_prod + float(extra or 0.0)
+            preview_box.markdown("### Preview\n"+ "\n".join(per_row_msgs) + f"\n\n**New time points:** {new_time:.2f}\n**New production points:** {new_prod:.2f}" + (f"\n**New extra points:** {float(extra):.2f}" if extra else "") + f"\n\n**Projected total for {date}: {projected:.2f} points**")
+        elif msgs:
+            preview_box.error("\n".join(msgs))
+
+        submitted = st.form_submit_button('Add')
+        if submitted:
+            if not start_t or not end_t:
+                st.error('Both start and end times are required (valid HHMM).'); st.stop()
+            rows = preview_rows(date, category, start_t, end_t, tee, prod, extra, notes)
+            new_df = pd.DataFrame(rows)
+            entries = pd.concat([entries, new_df], ignore_index=True)
+            save_entries(ws_entries, entries)
+            st.success('Saved entry' + (' (split overnight into two rows)' if len(rows)==2 else '') + '.')
+            st.experimental_rerun()
+
+    st.subheader('Your Entries')
     if entries.empty:
-        st.info("No entries yet.")
+        st.info('No entries yet.')
     else:
-        comp = []
-        for _, r in entries.iterrows():
-            a, total, ttl, d, e, n = compute_points(r, holidays)
-            comp.append({"Auto Points": round(a,2), "Entry Points Total": round(total,2),
-                         "Hours": ttl, "Day": d, "Evening": e, "Night": n})
-        comp = pd.DataFrame(comp)
-        show = pd.concat([entries.reset_index(drop=True), comp], axis=1)
-        show["Start"] = show["Start"].apply(lambda t: t.strftime("%H:%M") if isinstance(t, dt.time) else "")
-        show["End"]   = show["End"].apply(lambda t: t.strftime("%H:%M") if isinstance(t, dt.time) else "")
-        show["Hours (hh:mm)"]   = show["Hours"].apply(hhmm)
-        show["Day (hh:mm)"]     = show["Day"].apply(hhmm)
-        show["Evening (hh:mm)"] = show["Evening"].apply(hhmm)
-        show["Night (hh:mm)"]   = show["Night"].apply(hhmm)
-        show = show.drop(columns=["Hours","Day","Evening","Night"])
+        show = entries.copy()
+        show['Start']=show['Start'].apply(fmt_hhmm)
+        show['End']=show['End'].apply(fmt_hhmm)
         st.dataframe(show, use_container_width=True, hide_index=True)
 
 with tab_summary:
-    st.subheader("Daily Summary")
+    st.subheader('Daily Summary')
     if entries.empty:
-        st.info("No data yet.")
+        st.info('No data yet.')
     else:
-        comp = []
-        for _, r in entries.iterrows():
-            a, total, ttl, d, e, n = compute_points(r, holidays)
-            comp.append({"Date": r["Date"], "Entry Points Total": total})
-        daily = pd.DataFrame(comp).groupby("Date", as_index=False)["Entry Points Total"].sum().sort_values("Date")
-        daily["Running Monthly Total"] = daily["Entry Points Total"].cumsum()
+        comp=[]
+        for _,r in entries.iterrows():
+            tp = entry_time_points(r['Category'], r['Date'], r['Start'], r['End'])
+            tp += 22.0*float(r.get('TEE Exams',0) or 0)
+            total = tp + float(r.get('Productivity Points',0) or 0) + float(r.get('Extra Points',0) or 0)
+            comp.append({'Date': r['Date'], 'Total Points': total})
+        daily = pd.DataFrame(comp).groupby('Date', as_index=False)['Total Points'].sum().sort_values('Date')
+        daily['Running Monthly Total'] = daily['Total Points'].cumsum()
         st.dataframe(daily, use_container_width=True, hide_index=True)
-
-with tab_analytics:
-    import altair as alt
-    st.subheader("Analytics")
-    if entries.empty:
-        st.info("No data yet.")
-    else:
-        comp = []
-        for _, r in entries.iterrows():
-            a, total, ttl, d, e, n = compute_points(r, holidays)
-            comp.append({**r, "Total": total, "Hours": ttl})
-        df = pd.DataFrame(comp)
-        df["Date"] = pd.to_datetime(df["Date"])
-        chart1 = alt.Chart(df).mark_bar().encode(
-            x="yearmonth(Date):T",
-            y="sum(Total):Q",
-            color="Category:N",
-            tooltip=["yearmonth(Date):T","sum(Total):Q"]
-        ).properties(height=280)
-        st.altair_chart(chart1, use_container_width=True)
-
-with tab_reports:
-    st.subheader("Exports")
-    if entries.empty:
-        st.info("No data yet.")
-    else:
-        out_entries = entries.copy()
-        out_entries["Date"] = out_entries["Date"].apply(lambda d: d.strftime("%Y-%m-%d") if isinstance(d, dt.date) else "")
-        out_entries["Start"] = out_entries["Start"].apply(lambda t: t.strftime("%H:%M") if isinstance(t, dt.time) else "")
-        out_entries["End"]   = out_entries["End"].apply(lambda t: t.strftime("%H:%M") if isinstance(t, dt.time) else "")
-        st.download_button("Download Entries CSV", out_entries.to_csv(index=False).encode("utf-8"), "entries.csv", "text/csv")
-
-        comp = [{"Date": r["Date"], "Entry Points Total": compute_points(r, holidays)[1]} for _, r in entries.iterrows()]
-        daily = pd.DataFrame(comp).groupby("Date", as_index=False)["Entry Points Total"].sum().sort_values("Date")
-        st.download_button("Download Daily Summary CSV", daily.to_csv(index=False).encode("utf-8"), "daily_summary.csv", "text/csv")
-
-with tab_settings:
-    st.subheader("Holidays")
-    col1, col2 = st.columns([1,3])
-    hdate = col1.date_input("Add holiday", value=None)
-    if col1.button("Add"):
-        if hdate:
-            add_holiday(ws_holidays, hdate)
-            st.success("Holiday added."); st.experimental_rerun()
-    if holidays:
-        st.write("Current holidays:")
-        st.write(", ".join(sorted([d.strftime('%Y-%m-%d') for d in holidays])))
-    if st.button("Sign out"):
-        for k in ["creds","oauth_state"]:
-            st.session_state.pop(k, None)
-        st.success("Signed out."); st.stop()
