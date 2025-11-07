@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import datetime as dt
@@ -7,7 +6,7 @@ import time
 from google_auth_oauthlib.flow import Flow
 import gspread
 
-st.set_page_config(page_title="MWA Points Tracker — Live Preview", layout="wide")
+st.set_page_config(page_title="MWA Points Tracker – Live Preview", layout="wide")
 
 # Force rebuild indicator
 st.write("Build refresh:", time.time())
@@ -20,6 +19,30 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/spreadsheets",
 ]
+
+# ---------------- Helper: Parse HHMM ----------------
+def parse_hhmm(text: str):
+    """Parse HHMM format (e.g., '0830', '1400', '2345') to dt.time object"""
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        # Handle various formats
+        if len(text) == 4 and text.isdigit():  # HHMM
+            hh, mm = int(text[:2]), int(text[2:])
+        elif len(text) == 3 and text.isdigit():  # HMM (e.g., 830)
+            hh, mm = int(text[0]), int(text[1:])
+        elif ':' in text:  # HH:MM format
+            parts = text.split(':')
+            hh, mm = int(parts[0]), int(parts[1])
+        else:
+            return None
+        
+        if 0 <= hh < 24 and 0 <= mm < 60:
+            return dt.time(hh, mm)
+    except:
+        pass
+    return None
 
 # ---------------- Helpers: bands & math ----------------
 def fmt_hhmm(t):
@@ -141,7 +164,7 @@ def login_button():
     st.session_state["oauth_state"] = state
     flow = get_auth_flow(state)
     auth_url, _ = flow.authorization_url(state=state)
-    st.link_button("🔐 Sign in with Google", auth_url, use_container_width=True)
+    st.link_button("🔒 Sign in with Google", auth_url, use_container_width=True)
 
 def exchange_code_for_token():
     params = st.query_params
@@ -219,7 +242,7 @@ def save_entries(ws_entries, df: pd.DataFrame):
         ws_entries.update(f"A2:H{len(out)+1}", out)
 
 # ---------------- App ----------------
-st.title("MWA Points Tracker — Live Preview")
+st.title("MWA Points Tracker – Live Preview")
 
 # Auth
 creds = st.session_state.get("creds")
@@ -259,8 +282,8 @@ with tab_entries:
         c = st.columns([1,1.5,1,1,1,1,1,2])
         date = c[0].date_input("Date", value=dt.date.today())
         category = c[1].selectbox("Category", CATEGORIES, index=0)
-        start_t = c[2].time_input("Start time", value=None, step=dt.timedelta(minutes=1))
-        end_t   = c[3].time_input("End time", value=None, step=dt.timedelta(minutes=1))
+        start_text = c[2].text_input("Start (HHMM)", value="", placeholder="0800", help="Enter time as HHMM (e.g., 0800, 1430)")
+        end_text   = c[3].text_input("End (HHMM)", value="", placeholder="1700", help="Enter time as HHMM (e.g., 1700, 2359)")
         tee   = c[4].number_input("TEE Exams", min_value=0, step=1, value=0)
         prod  = c[5].number_input("Productivity Points", min_value=0.0, step=1.0, value=0.0)
         extra = c[6].number_input("Extra Points", min_value=0.0, step=1.0, value=0.0)
@@ -268,11 +291,17 @@ with tab_entries:
 
         preview_box = st.empty()
 
+        # Parse times
+        start_t = parse_hhmm(start_text)
+        end_t = parse_hhmm(end_text)
+
         msgs=[]; valid=True
-        if start_t is None or end_t is None:
+        if start_t is None:
             valid=False
-            if start_t is None: msgs.append("❌ Start time is required.")
-            if end_t is None: msgs.append("❌ End time is required.")
+            msgs.append("❌ Invalid start time. Use HHMM format (e.g., 0800, 1430)")
+        if end_t is None:
+            valid=False
+            msgs.append("❌ Invalid end time. Use HHMM format (e.g., 1700, 2359)")
 
         if valid:
             rows = preview_rows(date, category, start_t, end_t, tee, prod, extra, notes)
@@ -310,13 +339,13 @@ with tab_entries:
         submitted = st.form_submit_button("Add")
         if submitted:
             if start_t is None or end_t is None:
-                st.error("Both start and end times are required."); st.stop()
+                st.error("Valid start and end times are required."); st.stop()
             rows = preview_rows(date, category, start_t, end_t, tee, prod, extra, notes)
             new_df = pd.DataFrame(rows)
             entries = pd.concat([entries, new_df], ignore_index=True)
             save_entries(ws_entries, entries)
             st.success("Saved entry" + (" (split overnight into two rows)" if len(rows)==2 else "") + ".")
-            st.experimental_rerun()
+            st.rerun()
 
     st.subheader("Your Entries")
     if entries.empty:
