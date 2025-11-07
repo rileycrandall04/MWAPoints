@@ -1,6 +1,7 @@
 # app.py
 # (see previous cell for full implementation notes)
 import streamlit as st
+st.write("Build refresh:", time.time())
 import pandas as pd
 import datetime as dt
 import time
