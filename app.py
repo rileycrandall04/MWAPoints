@@ -721,7 +721,7 @@ try:
         st.rerun()
     
     st.subheader("Your Entries")    
-        def compute_category_breakdown_for_date(date_obj: dt.date, df_entries: pd.DataFrame):
+    def compute_category_breakdown_for_date(date_obj: dt.date, df_entries: pd.DataFrame):
         """
         Returns a list of dicts: {Category, Minutes, Hours, Points} for the selected date.
         Uses the same dominance logic as compute_day_time_points so overlaps count only once
