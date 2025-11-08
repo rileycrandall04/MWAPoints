@@ -507,7 +507,7 @@ try:
     
     date = st.date_input("Date", value=dt.date.today(), format="MM/DD/YYYY")
     
-        date = st.date_input("Date", dt.date.today(), format="MM/DD/YYYY")
+    date = st.date_input("Date", dt.date.today(), format="MM/DD/YYYY")
     
     # --- Multi-interval entry ---
     if "intervals" not in st.session_state:
