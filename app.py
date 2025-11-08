@@ -24,7 +24,7 @@ SCOPES = [
 
 # ---------------- Helpers: bands & math ----------------
 def fmt_hhmm(t):
-return t.strftime("%H:%M") if isinstance(t, dt.time) else ""
+    return t.strftime("%H:%M") if isinstance(t, dt.time) else ""
 
 def hours_overlap(start_h, end_h, a, b):
 if end_h < start_h:
