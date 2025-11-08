@@ -6,7 +6,7 @@ import time
 from google_auth_oauthlib.flow import Flow
 import gspread
 
-st.set_page_config(page_title="MWA Points Tracker – Live Preview", layout="wide")
+st.set_page_config(page_title="MWA Points Tracker", layout="wide")
 
 # Force rebuild indicator
 st.write("Build refresh:", time.time())
