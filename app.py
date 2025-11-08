@@ -401,7 +401,7 @@ tab_entries, tab_summary, tab_reports = st.tabs(["Entries","Summary","Reports"])
 
 with tab_entries:
     
-st.subheader("Add Entry")
+    st.subheader("Add Entry")
 
 # --- Multi-interval entry ---
 if "intervals" not in st.session_state:
