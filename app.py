@@ -440,9 +440,9 @@ with tab_entries:
 
         submitted = st.form_submit_button("Add")
         if submitted:
-    # Save new rows
-    new_df = pd.DataFrame(rows)
-    entries = pd.concat([entries, new_df], ignore_index=True)
+            # Save new rows
+            new_df = pd.DataFrame(rows)
+            entries = pd.concat([entries, new_df], ignore_index=True)
             save_entries(ws_entries, entries)
 
             # Auto-update sheets
