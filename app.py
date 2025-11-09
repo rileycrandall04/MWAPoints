@@ -396,7 +396,7 @@ with tab_entries:
 
 # --- Live widgets (no form; instant preview) ---
 c = st.columns([1,1.5,1,1,1,1,1,2])
-date = c[0].date_input("Date", value=dt.date.today(), format="DD/MM/YYYY")
+date = c[0].date_input("Date", value=dt.date.today(), format="MM/DD/YYYY")
 category = c[1].selectbox("Category", CATEGORIES, index=0)
 
 # Free-text time inputs with colon-optional parsing
