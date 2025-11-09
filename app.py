@@ -9,7 +9,7 @@ import gspread
 from gspread_formatting import format_cell_range, CellFormat, Color, TextFormat
 
 # ---------------- Page ----------------
-st.set_page_config(page_title="MWA Points Tracker — Live Preview", layout="wide")
+st.set_page_config(page_title="MWA Points Tracker", layout="wide")
 st.write("Build refresh:", time.time())
 
 # ---------------- OAuth / Config ----------------
@@ -184,7 +184,7 @@ def get_auth_flow(state: str):
     client_config = {
         "web": {
             "client_id": OAUTH_CLIENT_ID,
-            "client_secret": OAUTH_CLIENT_SECRET",
+            "client_secret": OAUTH_CLIENT_SECRET,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "redirect_uris": [REDIRECT_URI],
