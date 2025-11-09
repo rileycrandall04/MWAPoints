@@ -392,7 +392,7 @@ tab_entries, tab_summary, tab_reports = st.tabs(["Entries","Summary","Reports"])
 
 with tab_entries:
     
-st.subheader("Add Entry")
+    st.subheader("Add Entry")
 
 # --- Live widgets (no form; instant preview) ---
 c = st.columns([1,1.5,1,1,1,1,1,2])
