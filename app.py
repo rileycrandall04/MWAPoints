@@ -312,32 +312,49 @@ def load_entries(ws_entries) -> pd.DataFrame:
 
 def ensure_user_sheet(gc):
     SPREADSHEET_NAME = "MWA Points Tracker"
+    
+    # Open or create spreadsheet
     try:
         sh = gc.open(SPREADSHEET_NAME)
     except Exception:
         sh = gc.create(SPREADSHEET_NAME)
 
     def get_or_create(name: str, header: Optional[List[str]] = None, rows=4000, cols=20):
+        """Get existing worksheet or create new one"""
+        ws = None
+        
+        # Try to get existing worksheet
         try:
             ws = sh.worksheet(name)
-            # Sheet exists, check if it has headers
-            if header:
-                try:
-                    vals = ws.get_all_values()
-                    if not vals or not vals[0]:
-                        # No data, add headers
-                        ws.update(f"A1:{chr(64+len(header))}1", [header])
-                except Exception:
-                    # If we can't read, try to write headers anyway
-                    try:
-                        ws.update(f"A1:{chr(64+len(header))}1", [header])
-                    except Exception:
-                        pass
         except Exception:
-            # Sheet doesn't exist, create it
-            ws = sh.add_worksheet(title=name, rows=rows, cols=cols)
-            if header:
-                ws.update(f"A1:{chr(64+len(header))}1", [header])
+            pass  # Worksheet doesn't exist
+        
+        # If worksheet doesn't exist, create it
+        if ws is None:
+            try:
+                ws = sh.add_worksheet(title=name, rows=rows, cols=cols)
+            except Exception as e:
+                # If it fails because sheet exists, try getting it again
+                if "already exists" in str(e).lower():
+                    try:
+                        ws = sh.worksheet(name)
+                    except Exception:
+                        raise Exception(f"Could not get or create worksheet '{name}': {e}")
+                else:
+                    raise
+        
+        # Ensure headers are present (only if we have header to set)
+        if ws and header:
+            try:
+                vals = ws.get_all_values()
+                # If sheet is empty or first row is empty, add headers
+                if not vals or not vals[0] or all(not cell for cell in vals[0]):
+                    end_col = chr(64 + len(header))
+                    ws.update(f"A1:{end_col}1", [header])
+            except Exception:
+                # If we can't read/write headers, continue anyway
+                pass
+        
         return ws
 
     ws_entries = get_or_create("Entries", header=[
@@ -348,6 +365,7 @@ def ensure_user_sheet(gc):
         "Date","Holiday","Time Points","Productivity Points","Extra Points","TEE Points","Total Points"
     ], rows=2000, cols=10)
     ws_msum = get_or_create("Monthly Summary", header=["Month","Total Points"], rows=300, cols=3)
+    
     return sh, ws_entries, ws_daily, ws_msum
 
 def save_entries(ws_entries, df: pd.DataFrame):
