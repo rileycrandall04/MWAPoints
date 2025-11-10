@@ -225,37 +225,6 @@ def exchange_code_for_token():
         return flow.credentials
     return None
 
-def ensure_user_sheet(gc):
-    SPREADSHEET_NAME = "MWA Points Tracker"
-    try:
-        sh = gc.open(SPREADSHEET_NAME)
-    except Exception:
-        sh = gc.create(SPREADSHEET_NAME)
-
-    def get_or_create(name: str, header: Optional[List[str]] = None, rows=4000, cols=20):
-        try:
-            ws = sh.worksheet(name)
-        except Exception:
-            ws = sh.add_worksheet(title=name, rows=rows, cols=cols)
-            if header:
-                ws.update(f"A1:{chr(64+len(header))}1", [header])
-        else:
-            if header:
-                vals = ws.get_all_values()
-                if not vals:
-                    ws.update(f"A1:{chr(64+len(header))}1", [header])
-        return ws
-
-    ws_entries = get_or_create("Entries", header=[
-        "Date","Holiday","Category","Start","End",
-        "TEE Exams","Productivity Points","Extra Points","Notes"
-    ])
-    ws_daily = get_or_create("Daily Totals", header=[
-        "Date","Holiday","Time Points","Productivity Points","Extra Points","TEE Points","Total Points"
-    ], rows=2000, cols=10)
-    ws_msum = get_or_create("Monthly Summary", header=["Month","Total Points"], rows=300, cols=3)
-    return sh, ws_entries, ws_daily, ws_msum
-
 
 def load_entries(ws_entries) -> pd.DataFrame:
     if st.button("Refresh Google Sheet Data"):
@@ -273,7 +242,45 @@ def load_entries(ws_entries) -> pd.DataFrame:
     df = pd.DataFrame(values)
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     return df
+def ensure_user_sheet(gc):
+    SPREADSHEET_NAME = "MWA Points Tracker"
+    try:
+        sh = gc.open(SPREADSHEET_NAME)
+    except Exception:
+        sh = gc.create(SPREADSHEET_NAME)
 
+    def get_or_create(name: str, header: Optional[List[str]] = None, rows=4000, cols=20):
+        try:
+            ws = sh.worksheet(name)
+            # Sheet exists, check if it has headers
+            if header:
+                try:
+                    vals = ws.get_all_values()
+                    if not vals or not vals[0]:
+                        # No data, add headers
+                        ws.update(f"A1:{chr(64+len(header))}1", [header])
+                except Exception:
+                    # If we can't read, try to write headers anyway
+                    try:
+                        ws.update(f"A1:{chr(64+len(header))}1", [header])
+                    except Exception:
+                        pass
+        except Exception:
+            # Sheet doesn't exist, create it
+            ws = sh.add_worksheet(title=name, rows=rows, cols=cols)
+            if header:
+                ws.update(f"A1:{chr(64+len(header))}1", [header])
+        return ws
+
+    ws_entries = get_or_create("Entries", header=[
+        "Date","Holiday","Category","Start","End",
+        "TEE Exams","Productivity Points","Extra Points","Notes"
+    ])
+    ws_daily = get_or_create("Daily Totals", header=[
+        "Date","Holiday","Time Points","Productivity Points","Extra Points","TEE Points","Total Points"
+    ], rows=2000, cols=10)
+    ws_msum = get_or_create("Monthly Summary", header=["Month","Total Points"], rows=300, cols=3)
+    return sh, ws_entries, ws_daily, ws_msum
 
 def save_entries(ws_entries, df: pd.DataFrame):
     header = ["Date","Holiday","Category","Start","End","TEE Exams","Productivity Points","Extra Points","Notes"]
