@@ -507,6 +507,24 @@ with tab_entries:
     st.session_state.intervals_v5 = new_intervals
     st.session_state.interval_ids_v5 = new_ids
 
+    # Add this debug section right before the preview_rows loop
+    # Insert around line 445, before "preview_rows = []"
+    
+    st.write("### Debug: Time Parsing")
+    for idx, row in enumerate(st.session_state.intervals_v5):
+        stime = parse_time_any(row["start_time"])
+        etime = parse_time_any(row["end_time"])
+        st.write(f"**Interval {idx+1}:**")
+        st.write(f"  - Raw start_time input: '{row['start_time']}'")
+        st.write(f"  - Parsed start: {stime}")
+        st.write(f"  - Raw end_time input: '{row['end_time']}'")
+        st.write(f"  - Parsed end: {etime}")
+    st.write("---")
+    
+    # Then continue with the existing preview_rows code...
+    preview_rows = []
+    affected_dates = set()
+    errors = []
     preview_rows = []
     affected_dates = set()
     errors = []
