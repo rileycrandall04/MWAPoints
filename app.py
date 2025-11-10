@@ -505,10 +505,6 @@ try:
         
         st.subheader("Add Entry")
     
-    date = st.date_input("Date", value=dt.date.today(), format="MM/DD/YYYY")
-    
-    date = st.date_input("Date", dt.date.today(), format="MM/DD/YYYY")
-    
     # --- Multi-interval entry ---
     if "intervals" not in st.session_state:
         st.session_state.intervals = [ {"category": CATEGORIES[0], "start": "730", "end": "1700"} ]
@@ -625,7 +621,7 @@ try:
     
     # --- Live widgets (no form; instant preview) ---
     c = st.columns([1,1.5,1,1,1,1,1,2])
-    date = c[0].date_input("Date", value=dt.date.today(), format="MM/DD/YYYY")
+    date = c[0].date_input("Date", value=dt.date.today(), format="MM/DD/YYYY", key="entry_date")
     category = c[1].selectbox("Category", CATEGORIES, index=0)
     
     # Free-text time inputs with colon-optional parsing
