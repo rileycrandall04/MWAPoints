@@ -225,23 +225,71 @@ def exchange_code_for_token():
         return flow.credentials
     return None
 
-
 def load_entries(ws_entries) -> pd.DataFrame:
-    if st.button("Refresh Google Sheet Data"):
-        st.session_state["sheet_data"] = ws_entries.get_all_records()
+    """Load entries with caching to reduce API calls"""
+    
+    # Initialize session state for cache if not present
     if "sheet_data" not in st.session_state:
-        st.info("Press 'Refresh Google Sheet Data' to load entries.")
+        st.session_state["sheet_data"] = None
+        st.session_state["last_refresh"] = None
+    
+    # Show refresh button
+    col1, col2 = st.columns([1, 3])
+    if col1.button("🔄 Refresh Data"):
+        try:
+            with st.spinner("Loading from Google Sheets..."):
+                st.session_state["sheet_data"] = ws_entries.get_all_records()
+                st.session_state["last_refresh"] = dt.datetime.now()
+            st.success("Data refreshed!")
+        except Exception as e:
+            st.error(f"Failed to refresh: {e}")
+            if "quota" in str(e).lower():
+                st.warning("⚠️ Google Sheets API quota exceeded. Please wait a minute and try again.")
+    
+    # Show last refresh time
+    if st.session_state["last_refresh"]:
+        col2.caption(f"Last refreshed: {st.session_state['last_refresh'].strftime('%I:%M:%S %p')}")
+    
+    # If no data loaded yet, show info message
+    if st.session_state["sheet_data"] is None:
+        st.info("👆 Press 'Refresh Data' to load your entries from Google Sheets.")
         return pd.DataFrame(columns=[
             "Date","Holiday","Category","Start","End","TEE Exams","Productivity Points","Extra Points","Notes"
         ])
+    
     values = st.session_state["sheet_data"]
     if not values:
         return pd.DataFrame(columns=[
             "Date","Holiday","Category","Start","End","TEE Exams","Productivity Points","Extra Points","Notes"
         ])
+    
     df = pd.DataFrame(values)
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    
+    # Parse dates
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
+    
+    # Parse times
+    for col in ["Start", "End"]:
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: parse_time_any(str(x)) if pd.notna(x) else None)
+    
+    # Parse numeric columns
+    for col in ["TEE Exams", "Productivity Points", "Extra Points"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    
+    # Handle boolean
+    if "Holiday" in df.columns:
+        df["Holiday"] = df["Holiday"].astype(bool)
+    
+    # Handle text columns
+    for col in ["Category", "Notes"]:
+        if col in df.columns:
+            df[col] = df[col].fillna("")
+    
     return df
+
 def ensure_user_sheet(gc):
     SPREADSHEET_NAME = "MWA Points Tracker"
     try:
