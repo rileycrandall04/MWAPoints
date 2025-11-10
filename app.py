@@ -59,6 +59,35 @@ def parse_time_any(txt: str) -> Optional[dt.time]:
         # Single digit: treat as hour (e.g., "5" -> 5:00)
         hh, mm = int(txt), 0
     elif len(txt) == 2:
+        # Two digits: could be "05" (5:00) or "30" (0:30)
+        # Treat as hours if <= 23, otherwise invalid
+        val = int(txt)
+        if val <= 23:
+            hh, mm = val, 0
+        else:
+            return None
+    elif len(txt) == 3:
+        # Three digits: "730" -> 7:30, "030" -> 0:30
+        hh, mm = int(txt[0]), int(txt[1:])
+    elif len(txt) == 4:
+        # Four digits: "0730" -> 7:30, "2359" -> 23:59, "0000" -> 0:00
+        hh, mm = int(txt[:2]), int(txt[2:])
+    else:
+        return None
+    
+    # Apply AM/PM conversion
+    if ampm == "am":
+        if hh == 12:
+            hh = 0
+    elif ampm == "pm":
+        if hh < 12:
+            hh += 12
+    
+    # Validate ranges
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return None
+    
+    return dt.time(hh, mm)
 
 def to_minutes(t: dt.time) -> int:
     return t.hour*60 + t.minute
