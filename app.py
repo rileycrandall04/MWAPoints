@@ -263,7 +263,7 @@ try:
     
 # ---------------- Sheets helpers ----------------
     def ensure_user_sheet(gc):
-    sh = gc.open("MWA Points Tracker")
+        sh = gc.open("MWA Points Tracker")
 
     def get_or_create(name):
         try:
