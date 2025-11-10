@@ -33,29 +33,32 @@ def fmt_hhmm(t: Optional[dt.time]) -> str:
     return t.strftime("%H:%M") if isinstance(t, dt.time) else ""
 
 def parse_time_any(txt: str) -> Optional[dt.time]:
-    # Parse '730', '7:30', '715am', '5pm', '19:05' -> datetime.time or None
+    """Parse '730', '7:30', '715am', '5pm', '19:05' -> datetime.time or None"""
     txt = (txt or "").strip().lower().replace(" ", "")
     if not txt:
         return None
+    
+    # Check for AM/PM
     ampm = None
     if txt.endswith("am"):
-        ampm = "am"; txt = txt[:-2]
+        ampm = "am"
+        txt = txt[:-2]
     elif txt.endswith("pm"):
-        ampm = "pm"; txt = txt[:-2]
+        ampm = "pm"
+        txt = txt[:-2]
+    
+    # Remove colons
     txt = txt.replace(":", "")
-    if not txt.isdigit() or len(txt) < 2 or len(txt) > 4:
+    
+    # Must be digits only at this point
+    if not txt.isdigit():
         return None
-    if len(txt) <= 2:
+    
+    # Parse based on length
+    if len(txt) == 1:
+        # Single digit: treat as hour (e.g., "5" -> 5:00)
         hh, mm = int(txt), 0
-    else:
-        hh, mm = int(txt[:-2]), int(txt[-2:])
-    if ampm == "am":
-        if hh == 12: hh = 0
-    elif ampm == "pm":
-        if hh < 12: hh += 12
-    if not (0 <= hh <= 23 and 0 <= mm <= 59):
-        return None
-    return dt.time(hh, mm)
+    elif len(txt) == 2:
 
 def to_minutes(t: dt.time) -> int:
     return t.hour*60 + t.minute
