@@ -124,12 +124,32 @@ def _minute_rate_pts(category: str, m: int, wknd_hol: bool) -> float:
     return 0.0  # Cardiac is an adder at day level
 
 def _split_across_midnights(start_dt: dt.datetime, end_dt: dt.datetime):
-    # Yield (date, start_minute, end_minute) slices per calendar day, end-exclusive.
+    """
+    Yield (date, start_minute, end_minute) slices per calendar day, end-exclusive.
+    For shifts that don't cross midnight, yields a single tuple.
+    For shifts that cross midnight, yields multiple tuples (one per day).
+    """
     cur = start_dt
+    
+    # If the shift doesn't cross midnight, just return the single interval
+    if start_dt.date() == end_dt.date():
+        yield (start_dt.date(), to_minutes(start_dt.time()), to_minutes(end_dt.time()))
+        return
+    
+    # First day: from start time to midnight
+    yield (cur.date(), to_minutes(cur.time()), 1440)
+    
+    # Move to next day
+    cur = (cur + dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Middle days: full 24-hour periods (if any)
     while cur.date() < end_dt.date():
-        yield (cur.date(), to_minutes(cur.time()), 1440)
+        yield (cur.date(), 0, 1440)
         cur = (cur + dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    yield (end_dt.date(), 0, to_minutes(end_dt.time()))
+    
+    # Last day: from midnight to end time
+    if to_minutes(end_dt.time()) > 0:
+        yield (end_dt.date(), 0, to_minutes(end_dt.time()))
 
 def compute_day_time_points(date_obj: dt.date, df_entries: pd.DataFrame):
     # Dominance per minute for a single date.
@@ -554,28 +574,6 @@ with tab_entries:
         new_ids.append(iid)
     st.session_state.intervals_v5 = new_intervals
     st.session_state.interval_ids_v5 = new_ids
-
-    # Add this debug section right before the preview_rows loop
-    # Insert around line 445, before "preview_rows = []"
-    
-    st.write("### Debug: Time Parsing")
-    for idx, row in enumerate(st.session_state.intervals_v5):
-        stime = parse_time_any(row["start_time"])
-        etime = parse_time_any(row["end_time"])
-        st.write(f"**Interval {idx+1}:**")
-        st.write(f"  - Raw start_time input: '{row['start_time']}'")
-        st.write(f"  - Parsed start: {stime}")
-        st.write(f"  - Raw end_time input: '{row['end_time']}'")
-        st.write(f"  - Parsed end: {etime}")
-    st.write("---")
-    
-    # Then continue with the existing preview_rows code...
-    preview_rows = []
-    affected_dates = set()
-    errors = []
-    preview_rows = []
-    affected_dates = set()
-    errors = []
 
     for row in st.session_state.intervals_v5:
         stime = parse_time_any(row["start_time"])
