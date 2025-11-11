@@ -555,6 +555,10 @@ with tab_entries:
         } ]
     if "interval_ids_v5" not in st.session_state:
         st.session_state.interval_ids_v5 = [f"int_{int(time.time()*1000)}"]
+    
+    # Add "show_preview" flag to session state
+    if "show_preview" not in st.session_state:
+        st.session_state.show_preview = False
 
     if st.button("➕ Add interval"):
         st.session_state.intervals_v5.append({
@@ -565,6 +569,7 @@ with tab_entries:
             "end_time": "",
         })
         st.session_state.interval_ids_v5.append(f"int_{int(time.time()*1000)}")
+        st.session_state.show_preview = False  # Hide preview when adding new interval
 
     new_intervals = []
     new_ids = []
@@ -581,6 +586,7 @@ with tab_entries:
         start_str = c[2].text_input("Start Time (e.g. 730, 7:30, 5pm)", value=row.get("start_time",""), key=key_st)
         end_str = c[4].text_input("End Time (e.g. 1700, 5pm)", value=row.get("end_time",""), key=key_et)
         if c[5].button("🗑️", key=f"del_{iid}"): 
+            st.session_state.show_preview = False  # Hide preview when deleting interval
             continue
         new_intervals.append({
             "category": cat,
@@ -592,161 +598,182 @@ with tab_entries:
         new_ids.append(iid)
     st.session_state.intervals_v5 = new_intervals
     st.session_state.interval_ids_v5 = new_ids
-
-    # Replace the preview_rows generation section (around line 460-495)
-    # This should come after the interval input section and before the preview display
     
-    preview_rows = []
-    affected_dates = set()
-    errors = []
-    
-    # Get the notes value from the form (make sure this is defined)
-    notes_value = st.session_state.get("notes_add", notes)
+    # Preview button
+    col1, col2 = st.columns([1, 3])
+    if col1.button("🔍 Generate Preview", type="primary"):
+        st.session_state.show_preview = True
+        st.rerun()
 
-    for row in st.session_state.intervals_v5:
-        stime = parse_time_any(row["start_time"])
-        etime = parse_time_any(row["end_time"])
-        sdate = row["start_date"]
-        edate = row["end_date"]
+    # Only generate preview if button was clicked
+    if st.session_state.show_preview:
+        preview_rows = []
+        affected_dates = set()
+        errors = []
         
-        if not (stime and etime and isinstance(sdate, dt.date) and isinstance(edate, dt.date)):
-            continue
-        
-        start_dt = dt.datetime.combine(sdate, stime)
-        end_dt = dt.datetime.combine(edate, etime)
-        
-        # Only treat as overnight if dates are the same AND end time is before start time
-        if edate == sdate and etime < stime:
-            end_dt = end_dt + dt.timedelta(days=1)
-        
-        # Check if shift exceeds 24 hours
-        if end_dt - start_dt > dt.timedelta(hours=24):
-            errors.append(f"Interval starting {sdate} {stime.strftime('%H:%M')} exceeds 24 hours – skipped.")
-            continue
-        
-        # Check if end is before or equal to start (invalid)
-        if end_dt <= start_dt:
-            errors.append(f"Interval starting {sdate} {stime.strftime('%H:%M')} has end time before or equal to start time – skipped.")
-            continue
-        
-        for d, smin, emin in _split_across_midnights(start_dt, end_dt):
-            affected_dates.add(d)
-            if emin <= smin:
+        notes_value = st.session_state.get("notes_add", notes)
+
+        for row in st.session_state.intervals_v5:
+            stime = parse_time_any(row["start_time"])
+            etime = parse_time_any(row["end_time"])
+            sdate = row["start_date"]
+            edate = row["end_date"]
+            
+            if not (stime and etime and isinstance(sdate, dt.date) and isinstance(edate, dt.date)):
                 continue
-            preview_rows.append({
-                "Date": d,
-                "Holiday": False,
-                "Category": row["category"],
-                "Start": minutes_to_time(smin),
-                "End": minutes_to_time(emin if emin < 1440 else 1439),
-                "TEE Exams": 0,
-                "Productivity Points": 0.0,
-                "Extra Points": 0.0,
-                "Notes": notes_value
-            })
+            
+            start_dt = dt.datetime.combine(sdate, stime)
+            end_dt = dt.datetime.combine(edate, etime)
+            
+            if edate == sdate and etime < stime:
+                end_dt = end_dt + dt.timedelta(days=1)
+            
+            if end_dt - start_dt > dt.timedelta(hours=24):
+                errors.append(f"Interval starting {sdate} {stime.strftime('%H:%M')} exceeds 24 hours – skipped.")
+                continue
+            
+            if end_dt <= start_dt:
+                errors.append(f"Interval starting {sdate} {stime.strftime('%H:%M')} has end time before or equal to start time – skipped.")
+                continue
+            
+            for d, smin, emin in _split_across_midnights(start_dt, end_dt):
+                affected_dates.add(d)
+                if emin <= smin:
+                    continue
+                preview_rows.append({
+                    "Date": d,
+                    "Holiday": False,
+                    "Category": row["category"],
+                    "Start": minutes_to_time(smin),
+                    "End": minutes_to_time(emin if emin < 1440 else 1439),
+                    "TEE Exams": 0,
+                    "Productivity Points": 0.0,
+                    "Extra Points": 0.0,
+                    "Notes": notes_value
+                })
 
-    # Now create the DataFrame
-    preview_df = pd.DataFrame(preview_rows)
-    if not preview_df.empty:
-        preview_df = preview_df.sort_values(["Date", "Start"]).reset_index(drop=True)
-    
-    sorted_dates = sorted(affected_dates)
-    holiday_map = {}
-    adders_day_index = 0
+        preview_df = pd.DataFrame(preview_rows)
+        if not preview_df.empty:
+            preview_df = preview_df.sort_values(["Date","Start"]).reset_index(drop=True)
 
-    st.markdown("### Preview")
-    if errors:
-        for e in errors:
-            st.warning(e)
+        sorted_dates = sorted(affected_dates)
+        holiday_map = {}
+        adders_day_index = 0
 
-    if len(sorted_dates) == 0:
-        st.caption("Add at least one valid interval to see preview.")
-    else:
-        if len(sorted_dates) == 1:
-            holiday_day1 = st.checkbox(f"Holiday for {sorted_dates[0].strftime('%m/%d/%Y')}", value=False, key="holiday_d1")
-            holiday_map[sorted_dates[0]] = holiday_day1
+        st.markdown("### Preview")
+        if errors:
+            for e in errors:
+                st.warning(e)
+
+        if len(sorted_dates) == 0:
+            st.caption("Add at least one valid interval to see preview.")
         else:
-            cols = st.columns([1,1,1])
-            holiday_day1 = cols[0].checkbox(f"Holiday Day 1 ({sorted_dates[0].strftime('%m/%d/%Y')})", value=False, key="holiday_d1")
-            holiday_day2 = cols[1].checkbox(f"Holiday Day 2 ({sorted_dates[1].strftime('%m/%d/%Y')})", value=False, key="holiday_d2")
-            adders_to_second = cols[2].checkbox("Apply one-time adders to Day 2", value=False, key="adders_day2")
-            holiday_map[sorted_dates[0]] = holiday_day1
-            holiday_map[sorted_dates[1]] = holiday_day2
-            adders_day_index = 1 if adders_to_second else 0
-
-        if not preview_df.empty:
-            preview_df["Holiday"] = preview_df["Date"].map(lambda d: holiday_map.get(d, False))
-
-        if not preview_df.empty:
-            show = preview_df.copy()
-            show["Start"] = show["Start"].apply(fmt_hhmm)
-            show["End"] = show["End"].apply(fmt_hhmm)
-            st.dataframe(show, use_container_width=True, hide_index=True)
-
-            per_date_info = []
-            for d in sorted_dates:
-                chunk = preview_df[preview_df["Date"] == d]
-                tpts, _, assigned_min, band_pts = compute_day_time_points(d, chunk)
-                per_date_info.append((d, tpts, assigned_min, band_pts))
-
-            for d, tpts, assigned_min, band_pts in per_date_info:
-                if assigned_min:
-                    st.info(f"{d.strftime('%m/%d/%Y')}: Assigned minimum 80 pts applied.")
-                st.markdown(f"**New time points (dominance) for {d.strftime('%m/%d/%Y')}: {tpts:.2f}**")
-                st.caption(f"Per-band (time-based only): 1.00x={band_pts['1.00x']:.2f} | 1.10x={band_pts['1.10x']:.2f} | 1.25x={band_pts['1.25x']:.2f}")
-
-            if float(prod or 0.0) != 0.0 or float(extra or 0.0) != 0.0 or int(tee or 0) > 0:
-                target_date = sorted_dates[min(adders_day_index, len(sorted_dates)-1)]
-                adders_total = float(prod or 0.0) + float(extra or 0.0) + float(int(tee or 0)*22.0)
-                st.markdown(f"**One-time adders will be applied to {target_date.strftime('%m/%d/%Y')}: {adders_total:.2f} pts**")
-
-            if not entries.empty:
-                existing_by_date = {}
-                for d in sorted_dates:
-                    same_day = entries[pd.to_datetime(entries["Date"]).dt.date == d]
-                    if not same_day.empty:
-                        cur_tpts, _, _, _ = compute_day_time_points(d, same_day)
-                        cur_tee = float(same_day.get("TEE Exams", 0).sum()) * 22.0
-                        cur_prod = float(same_day.get("Productivity Points", 0).sum())
-                        cur_extra = float(same_day.get("Extra Points", 0).sum())
-                        existing_by_date[d] = cur_tpts + cur_tee + cur_prod + cur_extra
-                    else:
-                        existing_by_date[d] = 0.0
+            if len(sorted_dates) == 1:
+                holiday_day1 = st.checkbox(f"Holiday for {sorted_dates[0].strftime('%m/%d/%Y')}", value=False, key="holiday_d1")
+                holiday_map[sorted_dates[0]] = holiday_day1
             else:
-                existing_by_date = {d:0.0 for d in sorted_dates}
+                cols = st.columns([1,1,1])
+                holiday_day1 = cols[0].checkbox(f"Holiday Day 1 ({sorted_dates[0].strftime('%m/%d/%Y')})", value=False, key="holiday_d1")
+                holiday_day2 = cols[1].checkbox(f"Holiday Day 2 ({sorted_dates[1].strftime('%m/%d/%Y')})", value=False, key="holiday_d2")
+                adders_to_second = cols[2].checkbox("Apply one-time adders to Day 2", value=False, key="adders_day2")
+                holiday_map[sorted_dates[0]] = holiday_day1
+                holiday_map[sorted_dates[1]] = holiday_day2
+                adders_day_index = 1 if adders_to_second else 0
 
-            st.markdown("#### Projected totals by date (including currently saved entries)")
-            for idx, (d, tpts, _, _) in enumerate(per_date_info):
-                add_one_time = 0.0
-                if idx == adders_day_index:
-                    add_one_time = float(prod or 0.0) + float(extra or 0.0) + float(int(tee or 0)*22.0)
-                projected = existing_by_date.get(d,0.0) + tpts + add_one_time
-                st.markdown(f"- **{d.strftime('%m/%d/%Y')}** -> {projected:.2f} points")
+            if not preview_df.empty:
+                preview_df["Holiday"] = preview_df["Date"].map(lambda d: holiday_map.get(d, False))
 
-    if st.button("Add to Sheet"):
-        if not preview_df.empty:
-            preview_df.loc[:, "TEE Exams"] = 0
-            preview_df.loc[:, "Productivity Points"] = 0.0
-            preview_df.loc[:, "Extra Points"] = 0.0
-            if len(sorted_dates) > 0:
-                chosen_date = sorted_dates[min(adders_day_index, len(sorted_dates)-1)]
-                idxs = preview_df.index[preview_df["Date"] == chosen_date].tolist()
-                if idxs:
-                    target_idx = idxs[0]
-                    preview_df.loc[target_idx, "TEE Exams"] = int(tee or 0)
-                    preview_df.loc[target_idx, "Productivity Points"] = float(prod or 0.0)
-                    preview_df.loc[target_idx, "Extra Points"] = float(extra or 0.0)
+            if not preview_df.empty:
+                show = preview_df.copy()
+                show["Start"] = show["Start"].apply(fmt_hhmm)
+                show["End"] = show["End"].apply(fmt_hhmm)
+                st.dataframe(show, use_container_width=True, hide_index=True)
 
-            entries_out = pd.concat([entries, preview_df], ignore_index=True)
-            save_entries(ws_entries, entries_out)
-            write_daily_totals(sh, entries_out)
-            write_month_sheets(sh, entries_out)
-            write_monthly_summary(sh, entries_out)
-            st.success("Saved intervals and updated Daily Totals, Month sheets, and Monthly Summary.")
-            st.rerun()
-        else:
-            st.warning("Enter at least one valid interval before adding.")
+                per_date_info = []
+                for d in sorted_dates:
+                    chunk = preview_df[preview_df["Date"] == d]
+                    tpts, _, assigned_min, band_pts = compute_day_time_points(d, chunk)
+                    per_date_info.append((d, tpts, assigned_min, band_pts))
 
+                for d, tpts, assigned_min, band_pts in per_date_info:
+                    if assigned_min:
+                        st.info(f"{d.strftime('%m/%d/%Y')}: Assigned minimum 80 pts applied.")
+                    st.markdown(f"**New time points (dominance) for {d.strftime('%m/%d/%Y')}: {tpts:.2f}**")
+                    st.caption(f"Per-band (time-based only): 1.00x={band_pts['1.00x']:.2f} | 1.10x={band_pts['1.10x']:.2f} | 1.25x={band_pts['1.25x']:.2f}")
+
+                if float(prod or 0.0) != 0.0 or float(extra or 0.0) != 0.0 or int(tee or 0) > 0:
+                    target_date = sorted_dates[min(adders_day_index, len(sorted_dates)-1)]
+                    adders_total = float(prod or 0.0) + float(extra or 0.0) + float(int(tee or 0)*22.0)
+                    st.markdown(f"**One-time adders will be applied to {target_date.strftime('%m/%d/%Y')}: {adders_total:.2f} pts**")
+
+                if not entries.empty:
+                    existing_by_date = {}
+                    for d in sorted_dates:
+                        same_day = entries[pd.to_datetime(entries["Date"]).dt.date == d]
+                        if not same_day.empty:
+                            cur_tpts, _, _, _ = compute_day_time_points(d, same_day)
+                            cur_tee = float(same_day.get("TEE Exams", 0).sum()) * 22.0
+                            cur_prod = float(same_day.get("Productivity Points", 0).sum())
+                            cur_extra = float(same_day.get("Extra Points", 0).sum())
+                            existing_by_date[d] = cur_tpts + cur_tee + cur_prod + cur_extra
+                        else:
+                            existing_by_date[d] = 0.0
+                else:
+                    existing_by_date = {d:0.0 for d in sorted_dates}
+
+                st.markdown("#### Projected totals by date (including currently saved entries)")
+                for idx, (d, tpts, _, _) in enumerate(per_date_info):
+                    add_one_time = 0.0
+                    if idx == adders_day_index:
+                        add_one_time = float(prod or 0.0) + float(extra or 0.0) + float(int(tee or 0)*22.0)
+                    projected = existing_by_date.get(d,0.0) + tpts + add_one_time
+                    st.markdown(f"- **{d.strftime('%m/%d/%Y')}** -> {projected:.2f} points")
+
+            if st.button("✅ Add to Sheet", type="primary"):
+                if not preview_df.empty:
+                    preview_df.loc[:, "TEE Exams"] = 0
+                    preview_df.loc[:, "Productivity Points"] = 0.0
+                    preview_df.loc[:, "Extra Points"] = 0.0
+                    if len(sorted_dates) > 0:
+                        chosen_date = sorted_dates[min(adders_day_index, len(sorted_dates)-1)]
+                        idxs = preview_df.index[preview_df["Date"] == chosen_date].tolist()
+                        if idxs:
+                            target_idx = idxs[0]
+                            preview_df.loc[target_idx, "TEE Exams"] = int(tee or 0)
+                            preview_df.loc[target_idx, "Productivity Points"] = float(prod or 0.0)
+                            preview_df.loc[target_idx, "Extra Points"] = float(extra or 0.0)
+
+                    entries_out = pd.concat([entries, preview_df], ignore_index=True)
+                    save_entries(ws_entries, entries_out)
+                    write_daily_totals(sh, entries_out)
+                    write_month_sheets(sh, entries_out)
+                    write_monthly_summary(sh, entries_out)
+                    
+                    # Reset form
+                    st.session_state.intervals_v5 = [{
+                        "category": CATEGORIES[0],
+                        "start_date": dt.date.today(),
+                        "start_time": "",
+                        "end_date": dt.date.today(),
+                        "end_time": "",
+                    }]
+                    st.session_state.interval_ids_v5 = [f"int_{int(time.time()*1000)}"]
+                    st.session_state.show_preview = False
+                    
+                    # Clear the input fields
+                    for key in list(st.session_state.keys()):
+                        if key.startswith(('stime_', 'etime_', 'cat_', 'sdate_', 'edate_')):
+                            del st.session_state[key]
+                    
+                    st.success(f"✅ Successfully added {len(preview_df)} interval(s) to the sheet and updated all summaries!")
+                    st.balloons()
+                    time.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.warning("Enter at least one valid interval before adding.")
+    else:
+        st.info("👆 Click 'Generate Preview' to see the point calculations before adding to sheet.")
+            
 with tab_summary:
     st.subheader("Daily & Monthly Summary")
 
