@@ -512,7 +512,7 @@ def write_monthly_summary(sh, df_entries: pd.DataFrame):
     format_cell_range(ws, f"A{total_row}:B{total_row}", fmt)
 
 # ---------------- App ----------------
-st.title("MWA Points Tracker — Live Preview")
+st.title("MWA Points Tracker")
 
 creds = st.session_state.get("creds")
 if not creds:
@@ -593,36 +593,63 @@ with tab_entries:
     st.session_state.intervals_v5 = new_intervals
     st.session_state.interval_ids_v5 = new_ids
 
+    # Replace the preview_rows generation section (around line 460-495)
+    # This should come after the interval input section and before the preview display
+    
+    preview_rows = []
+    affected_dates = set()
+    errors = []
+    
+    # Get the notes value from the form (make sure this is defined)
+    notes_value = st.session_state.get("notes_add", notes)
+
     for row in st.session_state.intervals_v5:
         stime = parse_time_any(row["start_time"])
         etime = parse_time_any(row["end_time"])
-        sdate = row["start_date"]; edate = row["end_date"]
+        sdate = row["start_date"]
+        edate = row["end_date"]
+        
         if not (stime and etime and isinstance(sdate, dt.date) and isinstance(edate, dt.date)):
             continue
+        
         start_dt = dt.datetime.combine(sdate, stime)
         end_dt = dt.datetime.combine(edate, etime)
-        if edate == sdate and end_dt <= start_dt:
+        
+        # Only treat as overnight if dates are the same AND end time is before start time
+        if edate == sdate and etime < stime:
             end_dt = end_dt + dt.timedelta(days=1)
+        
+        # Check if shift exceeds 24 hours
         if end_dt - start_dt > dt.timedelta(hours=24):
-            errors.append(f"Interval starting {sdate} {stime.strftime('%H:%M')} exceeds 24 hours — skipped.")
+            errors.append(f"Interval starting {sdate} {stime.strftime('%H:%M')} exceeds 24 hours – skipped.")
             continue
+        
+        # Check if end is before or equal to start (invalid)
+        if end_dt <= start_dt:
+            errors.append(f"Interval starting {sdate} {stime.strftime('%H:%M')} has end time before or equal to start time – skipped.")
+            continue
+        
         for d, smin, emin in _split_across_midnights(start_dt, end_dt):
             affected_dates.add(d)
-            if emin <= smin: continue
+            if emin <= smin:
+                continue
             preview_rows.append({
                 "Date": d,
                 "Holiday": False,
                 "Category": row["category"],
                 "Start": minutes_to_time(smin),
                 "End": minutes_to_time(emin if emin < 1440 else 1439),
-                "TEE Exams": 0, "Productivity Points": 0.0, "Extra Points": 0.0,
-                "Notes": notes
+                "TEE Exams": 0,
+                "Productivity Points": 0.0,
+                "Extra Points": 0.0,
+                "Notes": notes_value
             })
 
+    # Now create the DataFrame
     preview_df = pd.DataFrame(preview_rows)
     if not preview_df.empty:
-        preview_df = preview_df.sort_values(["Date","Start"]).reset_index(drop=True)
-
+        preview_df = preview_df.sort_values(["Date", "Start"]).reset_index(drop=True)
+    
     sorted_dates = sorted(affected_dates)
     holiday_map = {}
     adders_day_index = 0
